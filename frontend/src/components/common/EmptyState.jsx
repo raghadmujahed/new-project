@@ -1,0 +1,11 @@
+export default function EmptyState({
+  title = "لا توجد بيانات",
+  description = "لا يوجد شيء لعرضه حاليًا.",
+}) {
+  return (
+    <div className="empty-state">
+      <h4>{title}</h4>
+      <p>{description}</p>
+    </div>
+  );
+}

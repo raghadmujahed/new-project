@@ -1,0 +1,34 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\User;
+use App\Models\OfficialLetter;
+
+class OfficialLetterPolicy
+{
+    public function view(User $user, OfficialLetter $letter): bool
+    {
+        if ($user->role?->name === 'admin') return true;
+        if ($user->id === $letter->sent_by) return true;
+        if ($user->id === $letter->received_by) return true;
+        if ($user->role?->name === 'education_directorate' && $letter->type === 'to_directorate') return true;
+        if ($user->role?->name === 'school_manager' && $letter->training_site_id === $user->training_site_id) return true;
+        return false;
+    }
+
+    public function create(User $user): bool
+    {
+        return in_array($user->role?->name, ['coordinator', 'education_directorate']);
+    }
+
+    public function send(User $user, OfficialLetter $letter): bool
+    {
+        return $user->id === $letter->sent_by && $letter->status === 'draft';
+    }
+
+    public function receive(User $user, OfficialLetter $letter): bool
+    {
+        return $user->id === $letter->received_by && $letter->status === 'sent_to_school';
+    }
+}

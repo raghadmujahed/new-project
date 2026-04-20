@@ -1,0 +1,30 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class WorkflowInstance extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'workflow_template_id', 'model_type', 'model_id', 'status', 'current_step_id'
+    ];
+
+    public function template()
+    {
+        return $this->belongsTo(WorkflowTemplate::class);
+    }
+
+    public function currentStep()
+    {
+        return $this->belongsTo(WorkflowStep::class, 'current_step_id');
+    }
+
+    public function approvals()
+    {
+        return $this->hasMany(WorkflowApproval::class);
+    }
+}
