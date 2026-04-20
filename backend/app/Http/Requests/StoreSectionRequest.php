@@ -12,14 +12,14 @@ class StoreSectionRequest extends FormRequest
         return in_array($this->user()->role?->name, ['admin', 'coordinator']);
     }
 
-    public function rules(): array
-    {
-        return [
-            'name' => 'required|string|max:255',
-            'academic_year' => 'required|digits:4|integer|min:2000|max:2100',
-            'academic_supervisor_id' => 'required|exists:users,id',
-            'semester' => 'required|in:first,second,summer',
-            'course_id' => 'required|exists:courses,id',
-        ];
-    }
+    public function rules()
+{
+    return [
+        'name' => 'required|string|max:255',
+        'course_id' => 'required|exists:courses,id',
+        'semester' => 'required|in:first,second',
+        'academic_year' => 'required|string|max:20',
+        'academic_supervisor_id' => 'nullable|exists:users,id', // تغيير إلى nullable
+    ];
+}
 }

@@ -2,20 +2,46 @@
 
 namespace App\Helpers;
 
-use Illuminate\Support\Facades\Auth;
+use Spatie\Activitylog\ActivitylogServiceProvider;
+use Spatie\Activitylog\Facades\Activity;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Contracts\Auth\Authenticatable;
 
 class ActivityLogger
 {
-    public static function log($event, $model = null, $message = '', $properties = [])
-    {
-        activity('system')
-            ->causedBy(Auth::user())
+    /**
+     * Log an activity.
+     *
+     * @param string $logName
+     * @param string $event
+     * @param string $description
+     * @param Model|null $model
+     * @param array $properties
+     * @param Model|Authenticatable|null $causedBy
+     * @return \Spatie\Activitylog\Contracts\Activity|null
+     */
+    public static function log(
+        string $logName,
+        string $event,
+        string $description,
+        ?Model $model = null,
+        array $properties = [],
+        $causedBy = null
+    ) {
+        // اختياري: تحقق من وجود logName و event
+        if (empty($logName) || empty($event)) {
+            throw new \InvalidArgumentException('logName and event are required');
+        }
+
+        $log = Activity::useLog($logName)
+            ->causedBy($causedBy)
             ->event($event)
-            ->performedOn($model)
-            ->withProperties(array_merge([
-                'ip' => request()->ip(),
-                'user_agent' => request()->userAgent(),
-            ], $properties))
-            ->log($message);
+            ->withProperties($properties);
+
+        if ($model) {
+            $log->performedOn($model);
+        }
+
+        return $log->log($description);
     }
 }

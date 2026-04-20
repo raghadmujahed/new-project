@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Helpers\ActivityLogger;
 
 class BackupController extends Controller
 {
@@ -27,25 +28,23 @@ class BackupController extends Controller
     }
 
     /**
-     * إنشاء نسخة احتياطية جديدة (بتنسيق JSON)
+     * إنشاء نسخة احتياطية جديدة
      */
     public function store(CreateBackupRequest $request)
     {
-        // جلب جميع الجداول من قاعدة البيانات
         $tables = DB::select('SHOW TABLES');
         $data = [];
-        
+
         foreach ($tables as $table) {
-            $tableName = reset($table); // اسم الجدول
+            $tableName = reset($table);
             $data[$tableName] = DB::table($tableName)->get();
         }
-        
-        // توليد اسم الملف وحفظه
+
         $filename = 'backup_' . date('Ymd_His') . '_' . Str::random(8) . '.json';
         $filepath = 'backups/' . $filename;
+
         Storage::put($filepath, json_encode($data, JSON_PRETTY_PRINT));
-        
-        // إنشاء سجل في قاعدة البيانات
+
         $backup = Backup::create([
             'user_id' => $request->user()->id,
             'type' => $request->type ?? 'full',
@@ -56,112 +55,153 @@ class BackupController extends Controller
             'notes' => $request->notes,
         ]);
 
-        
+        ActivityLogger::log(
+            'backup',
+            'created',
+            'Backup created',
+            $backup,
+            [
+                'backup_id' => $backup->id,
+                'backup_name' => $filename,
+            ],
+            $request->user()
+        );
+
         return response()->json($backup, 201);
     }
 
     /**
-     * عرض تفاصيل النسخة الاحتياطية (معلومات عامة + قائمة الجداول مع عدد السجلات)
+     * عرض تفاصيل النسخة
      */
-public function show($id)
-{
-    $backup = Backup::findOrFail($id);
-    $tables = [];
+    public function show($id)
+    {
+        $backup = Backup::findOrFail($id);
+        $tables = [];
 
-    if ($backup->file_path && Storage::exists($backup->file_path)) {
-        $content = json_decode(Storage::get($backup->file_path), true);
-        if (is_array($content)) {
-            foreach ($content as $tableName => $rows) {
-                $tables[] = [
-                    'name' => $tableName,
-                    'count' => is_array($rows) ? count($rows) : 0,
-                ];
+        if ($backup->file_path && Storage::exists($backup->file_path)) {
+            $content = json_decode(Storage::get($backup->file_path), true);
+
+            if (is_array($content)) {
+                foreach ($content as $tableName => $rows) {
+                    $tables[] = [
+                        'name' => $tableName,
+                        'count' => is_array($rows) ? count($rows) : 0,
+                    ];
+                }
             }
         }
+
+        return response()->json([
+            'id' => $backup->id,
+            'name' => $backup->name,
+            'created_at' => $backup->created_at,
+            'size' => $backup->size,
+            'type' => $backup->type,
+            'notes' => $backup->notes,
+            'tables' => $tables,
+        ]);
     }
 
-    return response()->json([
-        'id' => $backup->id,
-        'name' => $backup->name,
-        'created_at' => $backup->created_at,
-        'size' => $backup->size,
-        'type' => $backup->type,
-        'notes' => $backup->notes,
-        'tables' => $tables,
-    ]);
-}
-
     /**
-     * عرض بيانات جدول محدد من داخل النسخة الاحتياطية
+     * بيانات جدول داخل النسخة
      */
+    public function getTableData($id, $tableName)
+    {
+        $backup = Backup::findOrFail($id);
 
-public function getTableData($id, $tableName)
-{
-    $backup = Backup::findOrFail($id);
-    if (!$backup->file_path || !Storage::exists($backup->file_path)) {
-        return response()->json(['message' => 'الملف غير موجود'], 404);
+        if (!$backup->file_path || !Storage::exists($backup->file_path)) {
+            return response()->json(['message' => 'الملف غير موجود'], 404);
+        }
+
+        $content = json_decode(Storage::get($backup->file_path), true);
+        $tableData = $content[$tableName] ?? [];
+
+        return response()->json([
+            'data' => $tableData,
+            'count' => count($tableData),
+        ]);
     }
 
-    $content = json_decode(Storage::get($backup->file_path), true);
-    $tableData = $content[$tableName] ?? [];
-
-    return response()->json([
-        'data' => $tableData,
-        'count' => count($tableData),
-    ]);
-}
-
     /**
-     * حذف نسخة احتياطية (ملف + سجل)
+     * حذف نسخة احتياطية
      */
     public function destroy(Backup $backup)
     {
         Storage::delete($backup->file_path);
         $backup->delete();
+
+        ActivityLogger::log(
+            'backup',
+            'deleted',
+            'Backup deleted',
+            null,
+            [
+                'backup_id' => $backup->id,
+                'backup_name' => $backup->name,
+            ],
+            auth()->user()
+        );
+
         return response()->json(['message' => 'تم حذف النسخة الاحتياطية']);
     }
 
     /**
-     * استعادة نسخة احتياطية (استبدال قاعدة البيانات الحالية بالكامل)
-     * ملاحظة: هذه العملية خطيرة ويجب تقييدها للمسؤول فقط
+     * استعادة النسخة
      */
     public function restore(Request $request)
     {
         $request->validate([
             'backup_id' => 'required|exists:backups,id',
         ]);
-        
+
         $backup = Backup::findOrFail($request->backup_id);
+
         $filePath = storage_path('app/' . $backup->file_path);
-        
+
         if (!file_exists($filePath)) {
             return response()->json(['error' => 'ملف النسخة غير موجود'], 404);
         }
-        
-        // قراءة البيانات من ملف JSON
+
         $data = json_decode(file_get_contents($filePath), true);
-        
-        // بدء معاملة (transaction) لضمان سلامة البيانات
+
         DB::beginTransaction();
-        
+
         try {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+
             foreach ($data as $tableName => $rows) {
-                // حذف جميع السجلات الحالية من الجدول
                 DB::table($tableName)->truncate();
-                
-                // إدراج السجلات الجديدة
+
                 foreach ($rows as $row) {
-                    // تحويل الكائن إلى مصفوفة (إذا كان من نوع stdClass)
-                    $rowArray = (array) $row;
-                    DB::table($tableName)->insert($rowArray);
+                    DB::table($tableName)->insert((array)$row);
                 }
             }
-            
+
+            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+
             DB::commit();
-            return response()->json(['message' => 'تم استعادة النسخة الاحتياطية بنجاح']);
+
+            ActivityLogger::log(
+                'backup',
+                'restored',
+                'Backup restored',
+                $backup,
+                [
+                    'backup_id' => $backup->id,
+                    'backup_name' => $backup->name,
+                ],
+                auth()->user()
+            );
+
+            return response()->json(['message' => 'تم استعادة النسخة بنجاح']);
+
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => 'فشل الاستعادة: ' . $e->getMessage()], 500);
+
+            return response()->json([
+                'error' => 'فشل الاستعادة',
+                'details' => $e->getMessage()
+            ], 500);
         }
     }
 }

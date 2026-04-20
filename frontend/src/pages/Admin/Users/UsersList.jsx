@@ -10,17 +10,14 @@ export default function UsersList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filters, setFilters] = useState({ role_id: "", status: "", search: "" });
-  
-  // حالة التصفح
   const [pagination, setPagination] = useState({
     current_page: 1,
     last_page: 1,
     per_page: 10,
     total: 0,
   });
-  const [perPage, setPerPage] = useState(10); // عدد العناصر في الصفحة
+  const [perPage, setPerPage] = useState(10);
 
-  // جلب المستخدمين مع مراعاة الصفحة والفلاتر
   const fetchUsers = async (page = 1) => {
     setLoading(true);
     try {
@@ -32,17 +29,16 @@ export default function UsersList() {
         page,
         per_page: perPage,
       });
-      
-      // استخراج البيانات والصفحات (حسب هيكل استجابة Laravel)
-      const usersData = response.data?.data ?? response.data ?? [];
-      setUsers(usersData);
-      
-      // تحديث معلومات التصفح
+
+      const usersArray = response.data || [];
+      const meta = response.meta || {};
+
+      setUsers(usersArray);
       setPagination({
-        current_page: response.data?.current_page ?? response.current_page ?? 1,
-        last_page: response.data?.last_page ?? response.last_page ?? 1,
-        per_page: response.data?.per_page ?? response.per_page ?? perPage,
-        total: response.data?.total ?? response.total ?? 0,
+        current_page: meta.current_page || 1,
+        last_page: meta.last_page || 1,
+        per_page: meta.per_page || perPage,
+        total: meta.total || 0,
       });
       setError("");
     } catch (err) {
@@ -53,12 +49,10 @@ export default function UsersList() {
     }
   };
 
-  // عند تغيير الفلاتر أو عدد العناصر لكل صفحة، نبدأ من الصفحة 1
   useEffect(() => {
     fetchUsers(1);
   }, [filters, perPage, location.key]);
 
-  // تغيير الصفحة
   const goToPage = (page) => {
     if (page < 1 || page > pagination.last_page) return;
     fetchUsers(page);
@@ -68,7 +62,7 @@ export default function UsersList() {
     if (window.confirm("هل أنت متأكد من حذف هذا المستخدم؟")) {
       try {
         await deleteUser(id);
-        fetchUsers(pagination.current_page); // إعادة تحميل الصفحة الحالية
+        fetchUsers(pagination.current_page);
       } catch (err) {
         alert("حدث خطأ أثناء الحذف");
       }
@@ -125,7 +119,6 @@ export default function UsersList() {
         </div>
       </div>
 
-      {/* فلاتر البحث */}
       <div className="filters-bar">
         <input
           type="text"
@@ -160,10 +153,18 @@ export default function UsersList() {
           <option value="suspended">موقوف</option>
         </select>
 
-      
+        <select
+          value={perPage}
+          onChange={(e) => setPerPage(Number(e.target.value))}
+          style={{ width: "auto" }}
+        >
+          <option value="10">10 مستخدمين</option>
+          <option value="20">20 مستخدم</option>
+          <option value="50">50 مستخدم</option>
+          <option value="100">100 مستخدم</option>
+        </select>
       </div>
 
-      {/* جدول المستخدمين */}
       <table className="data-table">
         <thead>
           <tr>
@@ -193,12 +194,13 @@ export default function UsersList() {
             </tr>
           ))}
           {users.length === 0 && (
-            <tr><td colSpan="6" className="text-center">لا يوجد مستخدمون</td></tr>
+            <tr>
+              <td colSpan="6" className="text-center">لا يوجد مستخدمون</td>
+            </tr>
           )}
         </tbody>
       </table>
 
-      {/* عناصر التصفح */}
       {pagination.last_page > 1 && (
         <div className="pagination">
           <button

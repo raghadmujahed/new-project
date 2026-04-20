@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\UserService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use App\Helpers\ActivityLogger;
 
 class UserController extends Controller
 {
@@ -20,89 +21,86 @@ class UserController extends Controller
     public function __construct(UserService $userService)
     {
         $this->userService = $userService;
-        $this->authorizeResource(User::class, 'user');
+        // $this->authorizeResource(User::class, 'user'); // فعّل لاحقاً
     }
-
-    // ================= USERS =================
 
     public function index(Request $request)
     {
         $query = User::with(['role', 'department']);
 
-        if ($request->filled('role_id')) {
-            $query->where('role_id', $request->role_id);
-        }
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-
-        if ($request->filled('major')) {
-            $query->where('major', 'like', '%' . $request->major . '%');
-        }
-
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+        if ($request->search) {
+            $query->where(function ($q) use ($request) {
+                $q->where('name', 'like', "%{$request->search}%")
+                  ->orWhere('email', 'like', "%{$request->search}%");
             });
         }
 
-        return response()->json($query->paginate(10));
+        if ($request->role_id) {
+            $query->where('role_id', $request->role_id);
+        }
+
+        if ($request->status) {
+            $query->where('status', $request->status);
+        }
+
+        return UserResource::collection($query->paginate($request->per_page ?? 10));
     }
 
     public function store(StoreUserRequest $request)
     {
         $user = $this->userService->createUser($request->validated());
 
-        activity('user')
-            ->causedBy($request->user())
-            ->performedOn($user)
-            ->event('created')
-            ->withProperties([
+        ActivityLogger::log(
+            'user',
+            'created',
+            'تم إضافة مستخدم جديد',
+            $user,
+            [
                 'email' => $user->email,
                 'role_id' => $user->role_id
-            ])
-            ->log('تم إضافة مستخدم جديد');
+            ],
+            $request->user()
+        );
 
-        return new UserResource($user->load(['role', 'department']));
-    }
-
-    public function show(User $user)
-    {
         return new UserResource($user->load(['role', 'department']));
     }
 
     public function update(UpdateUserRequest $request, User $user)
     {
         $oldData = $user->getOriginal();
-
         $user = $this->userService->updateUser($user, $request->validated());
 
-        activity('user')
-            ->causedBy($request->user())
-            ->performedOn($user)
-            ->event('updated')
-            ->withProperties([
+        ActivityLogger::log(
+            'user',
+            'updated',
+            'تم تحديث المستخدم',
+            $user,
+            [
                 'old' => $oldData,
                 'new' => $user->getAttributes()
-            ])
-            ->log('تم تحديث المستخدم');
+            ],
+            $request->user()
+        );
 
         return new UserResource($user->load(['role', 'department']));
     }
 
-    public function destroy(Request $request, User $user)
+    public function destroy(User $user)  // أزلت Request $request لأنه غير مستخدم
     {
-        activity('user')
-            ->causedBy($request->user())
-            ->event('deleted')
-            ->withProperties([
-                'deleted_user' => $user->name,
-                'email' => $user->email
-            ])
-            ->log('تم حذف المستخدم');
+        $userName = $user->name;
+        $userEmail = $user->email;
+
+        ActivityLogger::log(
+            'user',
+            'deleted',
+            'تم حذف المستخدم',
+            $user,
+            [
+                'deleted_user' => $userName,
+                'email' => $userEmail
+            ],
+            auth()->user()
+        );
 
         $user->delete();
 
@@ -112,91 +110,80 @@ class UserController extends Controller
     public function changeStatus(ChangeUserStatusRequest $request, User $user)
     {
         $oldStatus = $user->status;
-
         $user = $this->userService->changeStatus($user, $request->status);
 
-        activity('user')
-            ->causedBy($request->user())
-            ->performedOn($user)
-            ->event('status_changed')
-            ->withProperties([
+        ActivityLogger::log(
+            'user',
+            'status_changed',
+            'تم تغيير حالة المستخدم',
+            $user,
+            [
                 'old_status' => $oldStatus,
                 'new_status' => $user->status
-            ])
-            ->log('تم تغيير حالة المستخدم');
+            ],
+            $request->user()
+        );
 
         return new UserResource($user->load(['role', 'department']));
     }
 
-    // ================= AUTH =================
-
     public function login(LoginRequest $request)
     {
-        $email = $request->email;
-        $password = $request->password;
-
-        // 1. تحقق من الحقول
-        if (!$email) {
-            return response()->json(['message' => 'البريد الإلكتروني مطلوب'], 422);
-        }
-
-        if (!$password) {
-            return response()->json(['message' => 'كلمة المرور مطلوبة'], 422);
-        }
-
-        // 2. البحث عن المستخدم
-        $user = User::where('email', $email)->first();
+        $user = User::where('email', $request->email)->first();
 
         if (!$user) {
-            activity('auth')
-                ->event('login_failed')
-                ->withProperties([
+            ActivityLogger::log(
+                'auth',
+                'login_failed',
+                'فشل تسجيل الدخول',
+                null,
+                [
                     'reason' => 'email_not_found',
-                    'email' => $email,
+                    'email' => $request->email,
                     'ip' => $request->ip()
-                ])
-                ->log('فشل تسجيل الدخول');
-
+                ]
+            );
             return response()->json(['message' => 'البريد الإلكتروني غير موجود'], 404);
         }
 
-        // 3. كلمة المرور
-        if (!Hash::check($password, $user->password)) {
-            activity('auth')
-                ->causedBy($user)
-                ->event('login_failed')
-                ->withProperties([
+        if (!Hash::check($request->password, $user->password)) {
+            ActivityLogger::log(
+                'auth',
+                'login_failed',
+                'كلمة المرور خاطئة',
+                $user,
+                [
                     'reason' => 'wrong_password',
-                    'email' => $email,
+                    'email' => $request->email,
                     'ip' => $request->ip()
-                ])
-                ->log('كلمة المرور خاطئة');
-
+                ]
+            );
             return response()->json(['message' => 'كلمة المرور غير صحيحة'], 401);
         }
 
-        // 4. الحساب غير مفعل
         if ($user->status !== 'active') {
-            activity('auth')
-                ->causedBy($user)
-                ->event('login_blocked')
-                ->log('حساب غير نشط');
-
+            ActivityLogger::log(
+                'auth',
+                'login_blocked',
+                'حساب غير نشط',
+                $user
+            );
             return response()->json(['message' => 'الحساب غير نشط'], 403);
         }
 
-        // 5. نجاح تسجيل الدخول
         $user->tokens()->delete();
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        activity('auth')
-            ->causedBy($user)
-            ->event('login')
-            ->withProperties([
+        ActivityLogger::log(
+            'auth',
+            'login',
+            'تم تسجيل الدخول',
+            $user,
+            [
                 'ip' => $request->ip(),
                 'user_agent' => $request->userAgent()
-            ])
-            ->log('تم تسجيل الدخول');
+            ]
+        );
 
         return response()->json([
             'user' => new UserResource($user->load(['role', 'department'])),
@@ -210,27 +197,22 @@ class UserController extends Controller
         $user = $request->user();
 
         if ($user) {
-            activity('auth')
-                ->causedBy($user)
-                ->event('logout')
-                ->withProperties([
+            ActivityLogger::log(
+                'auth',
+                'logout',
+                'تم تسجيل الخروج',
+                $user,
+                [
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent()
-                ])
-                ->log('تم تسجيل الخروج');
+                ]
+            );
         }
 
         $user?->currentAccessToken()?->delete();
 
         return response()->json(['message' => 'تم تسجيل الخروج بنجاح']);
     }
-
-    public function currentUser(Request $request)
-    {
-        return new UserResource($request->user()->load(['role', 'department']));
-    }
-
-    // ================= BULK =================
 
     public function bulkAdd(Request $request)
     {
@@ -243,33 +225,31 @@ class UserController extends Controller
             try {
                 $user = $this->userService->createUser($userData);
                 $success[] = $user;
-
-                activity('user')
-                    ->causedBy($request->user())
-                    ->performedOn($user)
-                    ->event('created_bulk')
-                    ->log('تم إضافة مستخدم');
-
+                ActivityLogger::log(
+                    'user',
+                    'created_bulk',
+                    'تم إضافة مستخدم',
+                    $user,
+                    [],
+                    $request->user()
+                );
             } catch (\Exception $e) {
-                $failed[] = [
-                    'email' => $userData['email'] ?? '?',
-                    'error' => $e->getMessage()
-                ];
+                $failed[] = ['email' => $userData['email'] ?? '?', 'error' => $e->getMessage()];
             }
         }
 
-        activity('user')
-            ->causedBy($request->user())
-            ->event('bulk_upload')
-            ->withProperties([
+        ActivityLogger::log(
+            'user',
+            'bulk_upload',
+            'رفع جماعي للمستخدمين',
+            null,
+            [
                 'success_count' => count($success),
                 'fail_count' => count($failed)
-            ])
-            ->log('رفع جماعي للمستخدمين');
+            ],
+            $request->user()
+        );
 
-        return response()->json([
-            'success' => $success,
-            'failed' => $failed
-        ]);
+        return response()->json(['success' => $success, 'failed' => $failed]);
     }
 }

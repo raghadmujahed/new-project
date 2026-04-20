@@ -9,6 +9,7 @@ use App\Http\Requests\GradeTaskSubmissionRequest;
 use App\Http\Resources\TaskSubmissionResource;
 use App\Models\TaskSubmission;
 use App\Models\Task;
+use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -16,110 +17,173 @@ class TaskSubmissionController extends Controller
 {
     public function __construct()
     {
-        // تطبيق سياسة الصلاحيات على جميع دوال الـ Resource
         $this->authorizeResource(TaskSubmission::class, 'task_submission');
     }
 
     /**
-     * عرض جميع تسليمات المهام (يمكن تصفيتها حسب task_id أو user_id)
+     * INDEX
      */
     public function index(Request $request)
     {
+        ActivityLogger::log(
+            'task_submission',
+            'viewed_list',
+            'Viewed task submissions list',
+            null,
+            [],
+            $request->user()
+        );
+
         $query = TaskSubmission::with(['task', 'user']);
-        
+
         if ($request->has('task_id')) {
             $query->where('task_id', $request->task_id);
         }
+
         if ($request->has('user_id')) {
             $query->where('user_id', $request->user_id);
         }
-        
+
         $submissions = $query->latest()->paginate($request->per_page ?? 15);
+
         return TaskSubmissionResource::collection($submissions);
     }
 
     /**
-     * تسليم مهمة (رفع ملف)
+     * STORE (Submit Task)
      */
     public function store(StoreTaskSubmissionRequest $request)
     {
         $data = $request->validated();
-        
-        // رفع الملف
+
         if ($request->hasFile('file')) {
             $data['file_path'] = $request->file('file')->store('task_submissions', 'public');
         }
-        
+
         $data['submitted_at'] = now();
         $data['user_id'] = $request->user()->id;
-        
+
         $submission = TaskSubmission::create($data);
-        
-        // تحديث حالة المهمة إلى "submitted" إذا كانت لا تزال pending أو in_progress
+
         $task = Task::find($data['task_id']);
+
         if ($task && in_array($task->status, ['pending', 'in_progress'])) {
             $task->update(['status' => 'submitted']);
         }
-        
+
+        ActivityLogger::log(
+            'task_submission',
+            'submitted',
+            'Task submitted',
+            $submission,
+            [
+                'task_id' => $data['task_id'],
+                'submission_id' => $submission->id
+            ],
+            $request->user()
+        );
+
         return new TaskSubmissionResource($submission);
     }
 
     /**
-     * عرض تسليم معين
+     * SHOW
      */
     public function show(TaskSubmission $taskSubmission)
     {
-        return new TaskSubmissionResource($taskSubmission->load(['task', 'user']));
+        ActivityLogger::log(
+            'task_submission',
+            'viewed',
+            'Viewed task submission',
+            $taskSubmission,
+            ['submission_id' => $taskSubmission->id],
+            auth()->user()
+        );
+
+        return new TaskSubmissionResource(
+            $taskSubmission->load(['task', 'user'])
+        );
     }
 
     /**
-     * تحديث تسليم (نادراً ما يستخدم، لكن يمكن للطالب تعديل تسليمه قبل التقييم)
+     * UPDATE
      */
     public function update(UpdateTaskSubmissionRequest $request, TaskSubmission $taskSubmission)
     {
         $data = $request->validated();
-        
+
         if ($request->hasFile('file')) {
-            // حذف الملف القديم إن وجد
             if ($taskSubmission->file_path) {
                 Storage::disk('public')->delete($taskSubmission->file_path);
             }
             $data['file_path'] = $request->file('file')->store('task_submissions', 'public');
         }
-        
+
         $taskSubmission->update($data);
+
+        ActivityLogger::log(
+            'task_submission',
+            'updated',
+            'Task submission updated',
+            $taskSubmission,
+            ['submission_id' => $taskSubmission->id],
+            $request->user()
+        );
+
         return new TaskSubmissionResource($taskSubmission);
     }
 
     /**
-     * تقييم التسليم (إضافة درجة وملاحظات) – للمشرف أو المعلم
+     * GRADE
      */
     public function grade(GradeTaskSubmissionRequest $request, TaskSubmission $taskSubmission)
     {
         $this->authorize('grade', $taskSubmission);
-        
+
         $taskSubmission->update([
             'grade' => $request->grade,
             'feedback' => $request->feedback,
         ]);
-        
-        // تحديث حالة المهمة إلى "graded"
+
         $taskSubmission->task->update(['status' => 'graded']);
-        
+
+        ActivityLogger::log(
+            'task_submission',
+            'graded',
+            'Task submission graded',
+            $taskSubmission,
+            [
+                'submission_id' => $taskSubmission->id,
+                'grade' => $request->grade
+            ],
+            $request->user()
+        );
+
         return new TaskSubmissionResource($taskSubmission);
     }
 
     /**
-     * حذف تسليم
+     * DELETE
      */
     public function destroy(TaskSubmission $taskSubmission)
     {
-        // حذف الملف المرتبط
         if ($taskSubmission->file_path) {
             Storage::disk('public')->delete($taskSubmission->file_path);
         }
-        
+
+        ActivityLogger::log(
+            'task_submission',
+            'deleted',
+            'Task submission deleted',
+            $taskSubmission,
+            ['submission_id' => $taskSubmission->id],
+            auth()->user()
+        );
+
         $taskSubmission->delete();
-        return response()->json(['message' => 'تم حذف التسليم بنجاح']);
+
+        return response()->json([
+            'message' => 'تم حذف التسليم بنجاح'
+        ]);
     }
 }

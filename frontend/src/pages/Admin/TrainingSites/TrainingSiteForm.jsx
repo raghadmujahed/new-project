@@ -49,6 +49,28 @@ export default function TrainingSiteForm() {
   // معالجة رفع ملف Excel
   const handleFileChange = (e) => setBulkFile(e.target.files[0]);
 
+  // دالة مساعدة لتحويل القيم إلى الأنواع الصحيحة
+  const normalizeValue = (value, type) => {
+    if (value === undefined || value === null) {
+      if (type === "number") return 0;
+      if (type === "boolean") return false;
+      return "";
+    }
+    switch (type) {
+      case "string":
+        return String(value).trim();
+      case "number":
+        const num = Number(value);
+        return isNaN(num) ? 0 : num;
+      case "boolean":
+        if (typeof value === "boolean") return value;
+        const str = String(value).toLowerCase();
+        return str === "نعم" || str === "yes" || str === "true" || str === "1";
+      default:
+        return value;
+    }
+  };
+
   const processBulkUpload = async () => {
     if (!bulkFile) return alert("اختر ملف Excel أولاً");
     setBulkLoading(true);
@@ -59,17 +81,24 @@ export default function TrainingSiteForm() {
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: "array" });
         const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+        
         const sites = rows.map((row) => ({
-          name: row["الاسم"] || row["name"] || "",
-          location: row["الموقع"] || row["location"] || "",
-          phone: row["الهاتف"] || row["phone"] || "",
-          description: row["الوصف"] || row["description"] || "",
-          directorate: row["المديرية"] || row["directorate"] || "وسط",
-          capacity: parseInt(row["السعة"] || row["capacity"] || 10),
-          site_type: row["نوع الموقع"] === "مركز صحي" ? "health_center" : "school",
-          governing_body: row["الجهة المسؤولة"] === "وزارة الصحة" ? "ministry_of_health" : "directorate_of_education",
-          is_active: (row["نشط"] === "نعم" || row["is_active"] === true || row["is_active"] === "true") ? true : false,
-        })).filter(s => s.name); // الاسم إجباري
+          name: normalizeValue(row["الاسم"] || row["name"], "string"),
+          location: normalizeValue(row["الموقع"] || row["location"], "string"),
+          phone: normalizeValue(row["الهاتف"] || row["phone"], "string"),   // 🔥 تحويل الرقم إلى نص
+          description: normalizeValue(row["الوصف"] || row["description"], "string"),
+          directorate: normalizeValue(row["المديرية"] || row["directorate"], "string") || "وسط",
+          capacity: normalizeValue(row["السعة"] || row["capacity"], "number") || 10,
+          site_type: (() => {
+            const val = normalizeValue(row["نوع الموقع"] || row["site_type"], "string");
+            return val === "مركز صحي" ? "health_center" : "school";
+          })(),
+          governing_body: (() => {
+            const val = normalizeValue(row["الجهة المسؤولة"] || row["governing_body"], "string");
+            return val === "وزارة الصحة" ? "ministry_of_health" : "directorate_of_education";
+          })(),
+          is_active: normalizeValue(row["نشط"] || row["is_active"], "boolean"),
+        })).filter(s => s.name !== ""); // الاسم إجباري
 
         if (sites.length === 0) throw new Error("لا توجد بيانات صالحة (الاسم مطلوب)");
 
@@ -80,17 +109,20 @@ export default function TrainingSiteForm() {
             await createTrainingSite(site);
             successList.push(site.name);
           } catch (err) {
-            errorList.push({ name: site.name, error: err.response?.data?.message || err.message });
+            let errorMsg = err.response?.data?.message || err.message;
+            // إذا كان الخطأ متعلق بالهاتف، نضيف تلميح
+            if (errorMsg.includes("phone")) errorMsg += " (تأكد أن الهاتف نص وليس رقماً)";
+            errorList.push({ name: site.name, error: errorMsg });
           }
         }
         setBulkResults({ success: successList, errors: errorList });
         if (successList.length) alert(`تمت إضافة ${successList.length} موقع بنجاح`);
+        if (errorList.length) console.error("أخطاء الرفع:", errorList);
       } catch (err) {
         alert(err.message);
       } finally {
         setBulkLoading(false);
         setBulkFile(null);
-        // إعادة تعيين حقل الملف
         document.getElementById("bulk-file-input").value = "";
       }
     };

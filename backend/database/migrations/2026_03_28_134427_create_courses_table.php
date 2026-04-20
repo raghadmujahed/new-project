@@ -19,6 +19,10 @@ public function up()
         $table->text('description')->nullable();
         $table->integer('credit_hours')->default(3);
         $table->enum('type', ['practical', 'theoretical', 'both'])->default('practical');
+         $table->foreignId('department_id')
+                  ->nullable()
+                  ->constrained('departments')
+                  ->onDelete('set null');
         $table->timestamps();
         $table->softDeletes();
     });

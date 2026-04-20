@@ -3,7 +3,6 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
-use App\Enums\CourseType;
 
 class StoreCourseRequest extends FormRequest
 {
@@ -20,6 +19,7 @@ class StoreCourseRequest extends FormRequest
             'description' => 'nullable|string',
             'credit_hours' => 'required|integer|min:1|max:6',
             'type' => 'required|in:practical,theoretical,both',
+            'department_id' => 'nullable|exists:departments,id',
         ];
     }
 }

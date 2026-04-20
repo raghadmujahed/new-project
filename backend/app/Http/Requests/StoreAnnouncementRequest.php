@@ -8,20 +8,22 @@ class StoreAnnouncementRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return in_array($this->user()->role?->name, ['admin', 'coordinator']);
+        return true;
     }
 
     public function rules(): array
     {
         return [
-            'title' => 'required|string|max:255',
-            'content' => 'required|string',
-            'target_roles' => 'nullable|array',
-            'target_roles.*' => 'exists:roles,id',
-            'target_users' => 'nullable|array',
-            'target_users.*' => 'exists:users,id',
-            'target_departments' => 'nullable|array',
-            'target_departments.*' => 'exists:departments,id',
+            'title' => ['required', 'string', 'max:255'],
+            'content' => ['required', 'string'],
+
+            // 🔥 new system
+            'target_type' => ['required', 'in:all,role,user,department'],
+
+            'target_ids' => ['nullable', 'array'],
+
+            // كل عنصر داخل المصفوفة رقم
+            'target_ids.*' => ['integer', 'exists:users,id'],
         ];
     }
 }

@@ -11,6 +11,7 @@ use App\Http\Resources\TaskResource;
 use App\Models\Task;
 use App\Models\TaskSubmission;
 use App\Services\TaskService;
+use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 
 class TaskController extends Controller
@@ -20,26 +21,29 @@ class TaskController extends Controller
     public function __construct(TaskService $taskService)
     {
         $this->taskService = $taskService;
-
-        // حماية الـ routes الخاصة بـ CRUD
         $this->authorizeResource(Task::class, 'task');
     }
 
     /**
-     * Student Tasks (FIXED)
+     * Student Tasks
      */
     public function studentIndex(Request $request)
     {
+        ActivityLogger::log(
+            'task',
+            'viewed_list',
+            'Viewed student tasks',
+            null,
+            [],
+            $request->user()
+        );
+
         $user = $request->user();
 
-        // حماية من عدم تسجيل الدخول
         if (!$user) {
-            return response()->json([
-                'message' => 'Unauthenticated'
-            ], 401);
+            return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        // جلب المهام حسب علاقة التدريب
         $tasks = Task::whereHas('trainingAssignment.enrollment', function ($q) use ($user) {
             $q->where('user_id', $user->id);
         })
@@ -56,6 +60,15 @@ class TaskController extends Controller
      */
     public function index(Request $request)
     {
+        ActivityLogger::log(
+            'task',
+            'viewed_list',
+            'Viewed tasks list',
+            null,
+            [],
+            $request->user()
+        );
+
         $query = Task::with([
             'trainingAssignment.enrollment.user',
             'assignedBy'
@@ -85,6 +98,15 @@ class TaskController extends Controller
             $request->user()->id
         );
 
+        ActivityLogger::log(
+            'task',
+            'created',
+            'Task created',
+            $task,
+            ['task_id' => $task->id],
+            $request->user()
+        );
+
         return new TaskResource($task);
     }
 
@@ -93,6 +115,15 @@ class TaskController extends Controller
      */
     public function show(Task $task)
     {
+        ActivityLogger::log(
+            'task',
+            'viewed',
+            'Viewed task',
+            $task,
+            ['task_id' => $task->id],
+            auth()->user()
+        );
+
         return new TaskResource(
             $task->load(['submissions.user', 'trainingAssignment'])
         );
@@ -105,6 +136,15 @@ class TaskController extends Controller
     {
         $task = $this->taskService->updateTask($task, $request->validated());
 
+        ActivityLogger::log(
+            'task',
+            'updated',
+            'Task updated',
+            $task,
+            ['task_id' => $task->id],
+            $request->user()
+        );
+
         return new TaskResource($task);
     }
 
@@ -113,6 +153,15 @@ class TaskController extends Controller
      */
     public function destroy(Task $task)
     {
+        ActivityLogger::log(
+            'task',
+            'deleted',
+            'Task deleted',
+            $task,
+            ['task_id' => $task->id],
+            auth()->user()
+        );
+
         $task->delete();
 
         return response()->json([
@@ -131,6 +180,18 @@ class TaskController extends Controller
             $request->validated()
         );
 
+        ActivityLogger::log(
+            'task',
+            'submitted',
+            'Task submitted',
+            $task,
+            [
+                'task_id' => $task->id,
+                'submission_id' => $submission->id
+            ],
+            $request->user()
+        );
+
         return response()->json([
             'message' => 'تم تسليم المهمة بنجاح',
             'submission_id' => $submission->id
@@ -146,6 +207,18 @@ class TaskController extends Controller
             $submission,
             $request->grade,
             $request->feedback
+        );
+
+        ActivityLogger::log(
+            'task_submission',
+            'graded',
+            'Task submission graded',
+            $submission,
+            [
+                'submission_id' => $submission->id,
+                'grade' => $request->grade
+            ],
+            $request->user()
         );
 
         return response()->json([

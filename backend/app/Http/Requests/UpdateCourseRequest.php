@@ -19,6 +19,7 @@ class UpdateCourseRequest extends FormRequest
             'description' => 'nullable|string',
             'credit_hours' => 'sometimes|integer|min:1|max:6',
             'type' => 'sometimes|in:practical,theoretical,both',
+            'department_id' => 'nullable|exists:departments,id',
         ];
     }
 }

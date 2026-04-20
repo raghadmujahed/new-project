@@ -4,7 +4,6 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use App\Enums\CourseType;
 
 class CourseResource extends JsonResource
 {
@@ -17,7 +16,9 @@ class CourseResource extends JsonResource
             'description' => $this->description,
             'credit_hours' => $this->credit_hours,
             'type' => $this->type,
-            'type_label' => CourseType::tryFrom($this->type)?->label() ?? $this->type,
+            'type_label' => $this->type_label,
+            'department_id' => $this->department_id,
+            'department' => new DepartmentResource($this->whenLoaded('department')),
             'created_at' => $this->created_at?->toDateTimeString(),
             'updated_at' => $this->updated_at?->toDateTimeString(),
             'deleted_at' => $this->deleted_at?->toDateTimeString(),

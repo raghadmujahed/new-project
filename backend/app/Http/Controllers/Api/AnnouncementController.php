@@ -7,8 +7,8 @@ use App\Http\Requests\StoreAnnouncementRequest;
 use App\Http\Requests\UpdateAnnouncementRequest;
 use App\Http\Resources\AnnouncementResource;
 use App\Models\Announcement;
-use App\Models\AnnouncementTarget;
 use Illuminate\Http\Request;
+use App\Helpers\ActivityLogger;
 
 class AnnouncementController extends Controller
 {
@@ -17,71 +17,149 @@ class AnnouncementController extends Controller
         $this->authorizeResource(Announcement::class, 'announcement');
     }
 
+    /**
+     * عرض الإعلانات حسب المستخدم
+     */
     public function index(Request $request)
     {
-        $query = Announcement::with(['user', 'targets.role', 'targets.user', 'targets.department']);
-        
-        // إذا لم يكن أدمن، اعرض فقط الإعلانات المستهدفة له
-        if ($request->user()->role?->name !== 'admin') {
-            $userId = $request->user()->id;
-            $roleId = $request->user()->role_id;
-            $deptId = $request->user()->department_id;
-            
-            $query->whereHas('targets', function($q) use ($userId, $roleId, $deptId) {
-                $q->where(function($sq) use ($userId, $roleId, $deptId) {
-                    $sq->where('user_id', $userId)
-                       ->orWhere('role_id', $roleId)
-                       ->orWhere('department_id', $deptId);
-                });
-            })->orWhereDoesntHave('targets');
+        $user = $request->user();
+
+        $query = Announcement::with('user');
+
+        // منع التكرار كل 5 دقائق
+        $cacheKey = 'view_announcements_' . $user->id;
+
+        if (!cache()->has($cacheKey)) {
+            ActivityLogger::log(
+                'announcement',
+                'viewed_list',
+                'Visited announcements page',
+                null,
+                ['ip' => $request->ip()],
+                $user
+            );
+            cache()->put($cacheKey, true, now()->addMinutes(5));
         }
-        
+
+        // فلترة حسب الدور
+        if ($user->role?->name !== 'admin') {
+            $query->where(function ($q) use ($user) {
+                $q->where('target_type', 'all')
+                    ->orWhere(function ($q) use ($user) {
+                        $q->where('target_type', 'user')
+                          ->whereJsonContains('target_ids', $user->id);
+                    })
+                    ->orWhere(function ($q) use ($user) {
+                        $q->where('target_type', 'role')
+                          ->whereJsonContains('target_ids', $user->role_id);
+                    })
+                    ->orWhere(function ($q) use ($user) {
+                        $q->where('target_type', 'department')
+                          ->whereJsonContains('target_ids', $user->department_id);
+                    });
+            });
+        }
+
         $announcements = $query->latest()->paginate($request->per_page ?? 15);
+
         return AnnouncementResource::collection($announcements);
     }
 
+    /**
+     * إنشاء إعلان
+     */
     public function store(StoreAnnouncementRequest $request)
     {
         $announcement = Announcement::create([
             'title' => $request->title,
             'content' => $request->content,
             'user_id' => $request->user()->id,
+            'target_type' => $request->target_type ?? 'all',
+            'target_ids' => $request->target_ids ?? null,
         ]);
-        
-        // إضافة الأهداف
-        if ($request->has('target_roles')) {
-            foreach ($request->target_roles as $roleId) {
-                AnnouncementTarget::create(['announcement_id' => $announcement->id, 'role_id' => $roleId]);
-            }
-        }
-        if ($request->has('target_users')) {
-            foreach ($request->target_users as $userId) {
-                AnnouncementTarget::create(['announcement_id' => $announcement->id, 'user_id' => $userId]);
-            }
-        }
-        if ($request->has('target_departments')) {
-            foreach ($request->target_departments as $deptId) {
-                AnnouncementTarget::create(['announcement_id' => $announcement->id, 'department_id' => $deptId]);
-            }
-        }
-        
-        return new AnnouncementResource($announcement->load('targets'));
+
+        ActivityLogger::log(
+            'announcement',
+            'created',
+            'Announcement created',
+            $announcement,
+            [
+                'announcement_id' => $announcement->id,
+                'title' => $announcement->title,
+                'target_type' => $announcement->target_type,
+            ],
+            $request->user()
+        );
+
+        return new AnnouncementResource($announcement->load('user'));
     }
 
+    /**
+     * عرض إعلان واحد
+     */
     public function show(Announcement $announcement)
     {
-        return new AnnouncementResource($announcement->load(['user', 'targets']));
+        ActivityLogger::log(
+            'announcement',
+            'viewed',
+            'Viewed announcement',
+            $announcement,
+            ['announcement_id' => $announcement->id],
+            auth()->user()
+        );
+
+        return new AnnouncementResource($announcement->load('user'));
     }
 
+    /**
+     * تحديث إعلان
+     */
     public function update(UpdateAnnouncementRequest $request, Announcement $announcement)
     {
-        $announcement->update($request->validated());
+        $announcement->update([
+            'title' => $request->title ?? $announcement->title,
+            'content' => $request->content ?? $announcement->content,
+            'target_type' => $request->target_type ?? $announcement->target_type,
+            'target_ids' => $request->target_ids ?? $announcement->target_ids,
+        ]);
+
+        ActivityLogger::log(
+            'announcement',
+            'updated',
+            'Announcement updated',
+            $announcement,
+            [
+                'announcement_id' => $announcement->id,
+                'title' => $announcement->title,
+            ],
+            $request->user()
+        );
+
         return new AnnouncementResource($announcement);
     }
 
+    /**
+     * حذف إعلان
+     */
     public function destroy(Announcement $announcement)
     {
+        $id = $announcement->id;
+        $title = $announcement->title;
+
         $announcement->delete();
+
+        ActivityLogger::log(
+            'announcement',
+            'deleted',
+            'Announcement deleted',
+            null,
+            [
+                'announcement_id' => $id,
+                'title' => $title,
+            ],
+            auth()->user()
+        );
+
         return response()->json(['message' => 'تم حذف الإعلان']);
     }
 }

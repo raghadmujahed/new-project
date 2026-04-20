@@ -8,14 +8,20 @@ class UpdateAnnouncementRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->id === $this->route('announcement')->user_id;
+        return true;
     }
 
     public function rules(): array
     {
         return [
-            'title' => 'sometimes|string|max:255',
-            'content' => 'sometimes|string',
+            'title' => ['sometimes', 'required', 'string', 'max:255'],
+            'content' => ['sometimes', 'required', 'string'],
+
+            // 🔥 new system
+            'target_type' => ['sometimes', 'in:all,role,user,department'],
+
+            'target_ids' => ['nullable', 'array'],
+            'target_ids.*' => ['integer'],
         ];
     }
 }

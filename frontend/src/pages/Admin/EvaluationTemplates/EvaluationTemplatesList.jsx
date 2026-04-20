@@ -1,4 +1,3 @@
-// src/pages/admin/EvaluationTemplates/EvaluationTemplatesList.jsx
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getEvaluationTemplates, deleteEvaluationTemplate } from "../../../services/api";
@@ -16,9 +15,9 @@ export default function EvaluationTemplatesList() {
     setLoading(true);
     try {
       const response = await getEvaluationTemplates();
-      // الاستجابة قد تأتي بصيغة { data: [...] } أو المصفوفة مباشرة
-      const templatesData = response.data || response;
-      setTemplates(Array.isArray(templatesData) ? templatesData : []);
+      // ✅ الصحيح: response.data هي المصفوفة
+      const templatesData = response.data || [];
+      setTemplates(templatesData);
     } catch (err) {
       console.error(err);
       setError("فشل تحميل قوالب التقييم");

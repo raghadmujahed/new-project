@@ -12,19 +12,49 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('announcements', function (Blueprint $table) {
-    $table->id();
+            $table->id();
 
-    $table->string('title');
-    $table->text('content');
+            // 🔹 بيانات الإعلان الأساسية
+            $table->string('title');
+            $table->text('content');
 
-    $table->foreignId('user_id')
-        ->constrained()
-        ->onDelete('cascade');
+            // 🔹 منشئ الإعلان
+            $table->foreignId('user_id')
+                ->constrained()
+                ->onDelete('cascade');
 
-    $table->timestamps();
+            /**
+             * 🔥 نظام الاستهداف (Targeting System)
+             */
 
-    $table->index('user_id');
-});
+            // نوع الاستهداف:
+            // all = الجميع
+            // role = أدوار
+            // user = مستخدمين محددين
+            // department = أقسام
+            $table->enum('target_type', ['all', 'role', 'user', 'department'])
+                ->default('all');
+
+            // تخزين IDs بشكل JSON (مرن جدًا)
+            // مثال: [1,2,3]
+            $table->json('target_ids')->nullable();
+
+            /**
+             * اختياري لتحسين النظام لاحقاً
+             */
+
+            // أولوية الإعلان (لو بدك لاحقاً)
+            $table->unsignedTinyInteger('priority')->default(0);
+
+            // هل هو مهم / pinned
+            $table->boolean('is_pinned')->default(false);
+
+            $table->timestamps();
+
+            // 🔹 Indexes لتحسين الأداء
+            $table->index('user_id');
+            $table->index('target_type');
+        });
     }
 
     /**
